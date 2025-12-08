@@ -1,0 +1,28 @@
+# Core numerics & data handling
+numpy
+pandas
+scipy
+scikit-learn
+matplotlib
+
+# Deep learning stack
+torch
+pytorch-lightning
+torchmetrics
+
+# Geometric / GNN operators
+torch-geometric
+torch-scatter
+torch-sparse
+
+# Sequence modeling utilities
+einops
+tensorboard
+tensorboard-data-server
+
+# Data pipelines & IO
+pyyaml
+tqdm
+requests
+tables
+networkx
