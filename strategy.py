@@ -368,9 +368,17 @@ class MarketPredictor:
         train_losses = []
         test_scores = []
         baseline_score = None
+        solution_df = None
         
-        # Compute baseline score once if test provided
-        if test_df is not None:
+        # Check if test data has required columns for evaluation
+        can_evaluate_test = (
+            test_df is not None and 
+            'forward_returns' in test_df.columns and 
+            'risk_free_rate' in test_df.columns
+        )
+        
+        # Compute baseline score once if test provided with required columns
+        if can_evaluate_test:
             n_test = len(test_df)
             baseline_positions = [1.0] * n_test  # 100% market
             solution_df = test_df[['date_id', 'forward_returns', 'risk_free_rate']].copy()
@@ -381,6 +389,8 @@ class MarketPredictor:
                 baseline_score = None
             if baseline_score is not None:
                 print(f"Baseline (100% Market) Test Score: {baseline_score:.4f}")
+        elif test_df is not None:
+            print("Note: Test data missing 'forward_returns'/'risk_free_rate' - skipping periodic evaluation")
         
         # Training loop
         for epoch in range(epochs):
@@ -420,9 +430,9 @@ class MarketPredictor:
                 best_train_loss = train_loss
                 torch.save(self.model.state_dict(), 'best_market_model.pth')
             
-            # Test evaluation every N epochs
+            # Test evaluation every N epochs (only if test has required columns)
             test_score = None
-            if test_df is not None and (epoch + 1) % eval_every == 0:
+            if can_evaluate_test and (epoch + 1) % eval_every == 0:
                 self.model.eval()
                 positions, _, _ = self.predict_positions(test_df)
                 # Pad positions if needed
@@ -452,7 +462,7 @@ class MarketPredictor:
             print(log_msg)
         
         # Load best model (by test score if available, else by train loss)
-        if test_df is not None and best_test_score > float('-inf'):
+        if can_evaluate_test and best_test_score > float('-inf'):
             self.model.load_state_dict(torch.load('best_market_model_by_score.pth'))
             print(f"\n{'='*80}")
             print(f"Training completed! Loaded best model by test score: {best_test_score:.4f}")
