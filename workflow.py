@@ -178,14 +178,14 @@ def generate_predictions(predictor, test_imputed):
     print("STEP 4: GENERATING PREDICTIONS")
     print("=" * 100)
     
+    print(f"\nTest set size: {len(test_imputed)}")
+    print(f"Model sequence length: {predictor.sequence_length}")
+    
+    if len(test_imputed) < predictor.sequence_length:
+        print(f"Note: Test set shorter than sequence length - using zero-padded sequences")
+    
     print("\nGenerating predictions...")
     positions, predictions, uncertainties = predictor.predict_positions(test_imputed)
-    
-    # Pad if necessary
-    if len(positions) < len(test_imputed):
-        padding = [1.0] * (len(test_imputed) - len(positions))
-        positions = padding + positions
-        print(f"\nPadded {len(padding)} positions with neutral allocation (1.0)")
     
     print(f"\nGenerated {len(positions)} predictions")
     print(f"Position statistics:")
@@ -210,11 +210,22 @@ def generate_predictions(predictor, test_imputed):
 
 def evaluate_strategy(test_imputed, positions):
     """
-    Evaluate strategy against baselines using official metric
+    Evaluate strategy against baselines using official metric.
+    Returns None if test data doesn't have required columns.
     """
     print("\n" + "=" * 100)
     print("STEP 5: STRATEGY EVALUATION")
     print("=" * 100)
+    
+    # Check if test data has required columns for evaluation
+    required_cols = ['forward_returns', 'risk_free_rate']
+    missing_cols = [c for c in required_cols if c not in test_imputed.columns]
+    
+    if missing_cols:
+        print(f"\n⚠️  Cannot evaluate: test data missing {missing_cols}")
+        print("   This is expected for competition test sets where labels are hidden.")
+        print("   Skipping evaluation - submission.csv will still be generated.")
+        return None
     
     from evaluation import evaluate_with_baselines
     
@@ -344,7 +355,7 @@ def main(train_path='train.csv', test_path='test.csv',
     # Step 4: Generate predictions
     positions, predictions, uncertainties = generate_predictions(predictor, test_imputed)
     
-    # Step 5: Evaluate
+    # Step 5: Evaluate (only if test has labels)
     evaluator = evaluate_strategy(test_imputed, positions)
     
     # Step 6: Create submission
@@ -358,25 +369,25 @@ def main(train_path='train.csv', test_path='test.csv',
     print("   - train_imputed.csv (imputed training data)")
     print("   - test_imputed.csv (imputed test data)")
     print("   - best_market_model.pth (trained model)")
-    print("   - training_curves.png (training visualization)")
-    print("   - strategy_comparison.png (evaluation results)")
-    print("   - predictions_and_positions.png (predictions over time)")
     print("   - submission.csv (final submission)")
     
-    print("\n📊 Key Results:")
-    results = evaluator.compare_all_strategies()
-    best_score = results[results['Strategy'] == 'Deep Learning Strategy']['Official Score'].values[0]
-    baseline_1 = results[results['Strategy'] == 'Baseline 1 (100% Market)']['Official Score'].values[0]
-    
-    print(f"   Your Strategy Score:    {best_score:.4f}")
-    print(f"   Baseline 1 Score:       {baseline_1:.4f}")
-    
-    if best_score > baseline_1:
-        improvement = ((best_score - baseline_1) / abs(baseline_1)) * 100
-        print(f"   🎉 BEATS BASELINE by {improvement:.2f}%!")
+    if evaluator is not None:
+        print("\n📊 Key Results:")
+        results = evaluator.compare_all_strategies()
+        best_score = results[results['Strategy'] == 'Deep Learning Strategy']['Official Score'].values[0]
+        baseline_1 = results[results['Strategy'] == 'Baseline 1 (100% Market)']['Official Score'].values[0]
+        
+        print(f"   Your Strategy Score:    {best_score:.4f}")
+        print(f"   Baseline 1 Score:       {baseline_1:.4f}")
+        
+        if best_score > baseline_1:
+            improvement = ((best_score - baseline_1) / abs(baseline_1)) * 100
+            print(f"   🎉 BEATS BASELINE by {improvement:.2f}%!")
+        else:
+            decline = ((baseline_1 - best_score) / abs(baseline_1)) * 100
+            print(f"   ⚠️  Underperforms by {decline:.2f}%")
     else:
-        decline = ((baseline_1 - best_score) / abs(baseline_1)) * 100
-        print(f"   ⚠️  Underperforms by {decline:.2f}%")
+        print("\n📊 Evaluation skipped (no test labels available)")
     
     print("\n✅ Ready for submission: submission.csv")
     print("=" * 100)

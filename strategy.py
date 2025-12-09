@@ -490,10 +490,46 @@ class MarketPredictor:
         predictions = []
         uncertainties = []
         
+        # Check if we have required columns for proper position sizing
+        has_market_returns = 'market_forward_excess_returns' in df.columns
+        has_risk_free = 'risk_free_rate' in df.columns
+        
+        # Use lagged columns as fallback
+        df_eval = df.copy()
+        if not has_market_returns and 'lagged_market_forward_excess_returns' in df.columns:
+            df_eval['market_forward_excess_returns'] = df['lagged_market_forward_excess_returns']
+            has_market_returns = True
+        if not has_risk_free and 'lagged_risk_free_rate' in df.columns:
+            df_eval['risk_free_rate'] = df['lagged_risk_free_rate']
+            has_risk_free = True
+        
+        # Determine minimum sequence we can use
+        # If test set is smaller than sequence_length, use adaptive shorter sequences
+        min_seq = min(self.sequence_length, len(features_scaled) - 1)
+        if min_seq < 1:
+            min_seq = 1
+        
         with torch.no_grad():
-            for i in range(self.sequence_length, len(features_scaled)):
-                # Get sequence
-                seq = features_scaled[i - self.sequence_length:i]
+            for i in range(len(features_scaled)):
+                # Determine sequence start - use as much history as available up to sequence_length
+                seq_len = min(i, self.sequence_length)
+                
+                if seq_len < 1:
+                    # First row - no history, use neutral position
+                    positions.append(1.0)
+                    predictions.append(0.0)
+                    uncertainties.append(0.05)
+                    continue
+                
+                # Get sequence (pad with zeros if needed)
+                if seq_len < self.sequence_length:
+                    # Pad shorter sequences
+                    seq = features_scaled[max(0, i - seq_len):i]
+                    padding = np.zeros((self.sequence_length - seq_len, features_scaled.shape[1]))
+                    seq = np.vstack([padding, seq])
+                else:
+                    seq = features_scaled[i - self.sequence_length:i]
+                
                 seq_tensor = torch.FloatTensor(seq).unsqueeze(0).to(self.device)
                 
                 # Predict
@@ -504,19 +540,31 @@ class MarketPredictor:
                 predictions.append(pred_return)
                 uncertainties.append(pred_uncertainty)
                 
-                # Calculate market volatility
-                recent_returns = df['market_forward_excess_returns'].iloc[
-                    max(0, i - self.betting_strategy.market_vol_window):i
-                ]
-                market_vol = recent_returns.std()
-                
-                # Get risk-free rate
-                risk_free = df['risk_free_rate'].iloc[i]
-                
                 # Calculate position
-                position = self.betting_strategy.calculate_position(
-                    pred_return, pred_uncertainty, market_vol, risk_free
-                )
+                if has_market_returns and has_risk_free:
+                    # Calculate market volatility
+                    recent_returns = df_eval['market_forward_excess_returns'].iloc[
+                        max(0, i - self.betting_strategy.market_vol_window):i
+                    ]
+                    market_vol = recent_returns.std() if len(recent_returns) > 1 else 0.02
+                    
+                    # Get risk-free rate
+                    risk_free = df_eval['risk_free_rate'].iloc[i]
+                    
+                    # Calculate position using betting strategy
+                    position = self.betting_strategy.calculate_position(
+                        pred_return, pred_uncertainty, market_vol, risk_free
+                    )
+                else:
+                    # Simple position sizing based on predicted return
+                    # Map predicted return to [0, 2] range
+                    scaled = 1.0 + np.tanh(pred_return * 50)
+                    position = np.clip(scaled, 0.0, 2.0)
+                    
+                    # Reduce position under high uncertainty
+                    if pred_uncertainty > 0.02:
+                        position = 1.0 + (position - 1.0) * 0.5
+                
                 positions.append(position)
         
         return positions, predictions, uncertainties
